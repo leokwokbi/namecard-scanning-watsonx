@@ -16,7 +16,7 @@ st.title("Watsonx.ai Batch Namecard Scanner")
 
 # Initialize Session State
 if 'image_queue' not in st.session_state:
-    st.session_state['image_queue'] = []  # List of dicts: {'name': str, 'bytes': bytes, 'type': str}
+    st.session_state['image_queue'] = []  # List of dicts: {'name': str, 'bytes': bytes, 'type': str, 'id': str}
 if 'extraction_results' not in st.session_state:
     st.session_state['extraction_results'] = [] # List of dicts with extraction data
 
@@ -113,7 +113,18 @@ def to_excel(df):
 
 def update_result(index, key):
     """Callback to update session state when user edits a field"""
-    st.session_state['extraction_results'][index][key] = st.session_state[f"{key}_{index}"]
+    if 0 <= index < len(st.session_state['extraction_results']):
+        st.session_state['extraction_results'][index][key] = st.session_state[f"{key}_{index}"]
+
+def remove_from_queue(index):
+    """Callback to remove an image from the upload queue"""
+    if 0 <= index < len(st.session_state['image_queue']):
+        st.session_state['image_queue'].pop(index)
+
+def delete_result(index):
+    """Callback to remove an extracted result"""
+    if 0 <= index < len(st.session_state['extraction_results']):
+        st.session_state['extraction_results'].pop(index)
 
 # -------------------------
 # UI: Tabs
@@ -136,11 +147,13 @@ with tab1:
             accept_multiple_files=True
         )
         if uploaded_files:
+            import uuid
             # Add unique files to queue
             current_names = {img['name'] for img in st.session_state['image_queue']}
             for f in uploaded_files:
                 if f.name not in current_names:
                     st.session_state['image_queue'].append({
+                        'id': str(uuid.uuid4()),
                         'name': f.name,
                         'bytes': f.getvalue(),
                         'type': detect_mime(f.name)
@@ -149,31 +162,36 @@ with tab1:
     elif input_method == "Use Camera":
         camera_file = st.camera_input("Take a picture")
         if camera_file:
-            # Generate a unique name for camera captures
             import time
+            import uuid
             cam_name = f"camera_{int(time.time())}.jpg"
             # Avoid duplicate adds if the user hasn't retaken the photo
             current_names = {img['name'] for img in st.session_state['image_queue']}
             if cam_name not in current_names:
                 st.session_state['image_queue'].append({
+                    'id': str(uuid.uuid4()),
                     'name': cam_name,
                     'bytes': camera_file.getvalue(),
                     'type': "image/jpeg"
                 })
                 st.success("Photo added to queue!")
 
-    # Display Queue
+    # Display Queue with Delete Buttons
     if st.session_state['image_queue']:
         st.divider()
         st.subheader(f"Images in Queue ({len(st.session_state['image_queue'])})")
         
-        # Grid view of uploaded images
+        # Grid view 
         cols = st.columns(4)
         for i, img_data in enumerate(st.session_state['image_queue']):
-            with cols[i % 4]:
-                st.image(img_data['bytes'], caption=img_data['name'], use_column_width=True)
+            col = cols[i % 4]
+            with col:
+                st.image(img_data['bytes'], caption=f"{i+1}. {img_data['name']}", use_column_width=True)
+                if st.button("🗑️ Remove", key=f"del_queue_{img_data['id']}"):
+                    remove_from_queue(i)
+                    st.rerun()
         
-        if st.button("Clear Queue", type="secondary"):
+        if st.button("Clear All Images", type="secondary"):
             st.session_state['image_queue'] = []
             st.rerun()
     else:
@@ -210,7 +228,7 @@ with tab2:
                     "Email Address": data.get("Email Address"),
                     "Company Address": data.get("Company Address"),
                     "Company Website": data.get("Company Website"),
-                    "image_bytes": img_data['bytes'] # Store for display
+                    "image_bytes": img_data['bytes'] 
                 }
             except Exception as e:
                 row = {
@@ -228,10 +246,15 @@ with tab2:
         progress_bar.empty()
         status.success("Extraction Complete! You can edit the results below.")
 
-    # Editable Interface
+    # Editable Interface with Delete functionality
     if st.session_state['extraction_results']:
         st.divider()
-        st.write("Review and edit the extracted information below. Changes are saved automatically.")
+        st.write("Review and edit the extracted information below.")
+        
+        # We iterate over a copy to allow safe deletion during iteration if needed, 
+        # but for buttons we just need index.
+        # However, deleting changes indices, so we use a while loop or rerun approach.
+        # Since 'st.rerun()' is called in the callback wrapper/button click, standard loop is fine.
         
         for i, row in enumerate(st.session_state['extraction_results']):
             with st.container():
@@ -239,13 +262,15 @@ with tab2:
                 
                 # Column 1: Image
                 with c1:
-                    st.image(row['image_bytes'], caption=row['File Name'], use_column_width=True)
+                    st.image(row['image_bytes'], caption=f"Image #{i+1}: {row['File Name']}", use_column_width=True)
+                    if st.button(f"🗑️ Delete Card #{i+1}", key=f"del_res_{i}"):
+                        delete_result(i)
+                        st.rerun()
                 
                 # Column 2: Editable Fields
                 with c2:
-                    st.subheader(f"Card {i+1}")
+                    st.subheader(f"Card Details #{i+1}")
                     
-                    # Layout fields in a grid for compactness
                     f1, f2 = st.columns(2)
                     with f1:
                         st.text_input("Name", value=row['Name'], key=f"Name_{i}", on_change=update_result, args=(i, 'Name'))
@@ -270,14 +295,16 @@ with tab3:
         # Convert list of dicts to DataFrame, excluding internal 'image_bytes' column
         export_data = []
         for row in st.session_state['extraction_results']:
-            # Create a clean copy without the image bytes for CSV/Excel
             clean_row = {k: v for k, v in row.items() if k != 'image_bytes'}
             export_data.append(clean_row)
             
         df = pd.DataFrame(export_data)
         
+        # Adjust index to start from 1
+        df.index = df.index + 1
+        
         st.subheader("Final Dataset")
-        st.dataframe(df, use_container_width=True) # Shows ALL rows
+        st.dataframe(df, use_container_width=True) # Shows ALL rows with 1-based index
         
         # Download Buttons
         col1, col2, col3 = st.columns(3)
