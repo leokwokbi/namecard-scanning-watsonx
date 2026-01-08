@@ -5,23 +5,17 @@ import base64
 import pandas as pd
 import streamlit as st
 from PIL import Image
-
 from ibm_watsonx_ai.foundation_models import ModelInference
 from ibm_watsonx_ai.metanames import GenTextParamsMetaNames as GenParams
 
-
+# Page Configuration
 st.set_page_config(page_title="Watsonx Namecard Scanner", page_icon="📇", layout="wide")
-
 st.title("Watsonx.ai Batch Namecard Scanner")
-st.write("Batch upload business card images and extract structured contact data with a vision model.")
-
 
 # -------------------------
 # Sidebar: watsonx settings
 # -------------------------
 st.sidebar.header("Watsonx.ai Settings")
-
-# Allow defaults via environment variables for convenience in server deployments
 default_api_key = os.getenv("WATSONX_APIKEY", "")
 default_project_id = os.getenv("WATSONX_PROJECT_ID", "")
 default_url = os.getenv("WATSONX_URL", "https://us-south.ml.cloud.ibm.com")
@@ -38,46 +32,39 @@ model_id = st.sidebar.selectbox(
     ],
     index=0,
 )
-
-st.sidebar.caption("Tip: Keep the API Key secret. Prefer Streamlit Secrets or environment variables in production.")
-
+st.sidebar.caption("Tip: Keep the API Key secret.")
 
 # -------------------------
 # Helpers
 # -------------------------
 def file_to_base64(uploaded_file) -> str:
+    """Convert uploaded file to base64 string."""
     return base64.b64encode(uploaded_file.getvalue()).decode("utf-8")
 
-
 def detect_mime(filename: str) -> str:
+    """Detect mime type based on extension."""
     ext = (filename.split(".")[-1] or "").lower()
-    if ext in ("jpg", "jpeg"):
-        return "image/jpeg"
-    if ext == "png":
-        return "image/png"
-    if ext == "bmp":
-        return "image/bmp"
-    # Fallback: most vision endpoints accept jpeg; caller can convert if needed
+    if ext in ("jpg", "jpeg"): return "image/jpeg"
+    if ext == "png": return "image/png"
+    if ext == "bmp": return "image/bmp"
     return "image/jpeg"
 
-
 def extract_namecard_json(image_b64: str, mime_type: str) -> dict:
-    """
-    Sends an image to a watsonx.ai vision-capable chat model and returns a parsed JSON dict.
-    """
+    """Sends image to watsonx.ai and returns parsed JSON."""
     credentials = {"url": url, "apikey": api_key}
-
+    
+    # Updated prompt to match specific requested fields
     prompt_text = (
         "You are given a business card image.\n"
         "Extract information and return STRICT JSON ONLY, with exactly these keys:\n"
         '{\n'
-        '  "Name": string|null,\n'
-        '  "Title": string|null,\n'
-        '  "Company": string|null,\n'
-        '  "Phone": string|null,\n'
-        '  "Email": string|null,\n'
-        '  "Website": string|null,\n'
-        '  "Address": string|null\n'
+        ' "Company Name": string|null,\n'
+        ' "Name": string|null,\n'
+        ' "Title": string|null,\n'
+        ' "Phone Number": string|null,\n'
+        ' "Email Address": string|null,\n'
+        ' "Company Address": string|null,\n'
+        ' "Company Website": string|null\n'
         '}\n'
         "Rules:\n"
         "- No markdown, no code blocks, no explanation.\n"
@@ -113,83 +100,175 @@ def extract_namecard_json(image_b64: str, mime_type: str) -> dict:
 
     response = model.chat(messages=messages)
     content = response["choices"][0]["message"]["content"]
-
-    # Defensive cleanup if the model ever wraps JSON
     cleaned = content.replace("```json", "").replace("```", "").strip()
-
     return json.loads(cleaned)
 
+def to_excel(df):
+    """Convert dataframe to excel bytes."""
+    output = io.BytesIO()
+    # Requires openpyxl installed
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Sheet1')
+    return output.getvalue()
 
 # -------------------------
-# UI: batch upload
+# UI: Tabs Structure
 # -------------------------
-uploaded_files = st.file_uploader(
-    "Upload business card images (batch supported)",
-    type=["png", "jpg", "jpeg", "bmp"],
-    accept_multiple_files=True,
-)
 
-colA, colB = st.columns([1, 1], vertical_alignment="top")
+# Initialize session state for results
+if 'extraction_results' not in st.session_state:
+    st.session_state['extraction_results'] = None
 
-with colA:
-    st.subheader("Inputs")
-    st.write("1) Enter watsonx settings in the sidebar.")
-    st.write("2) Upload multiple images.")
-    st.write("3) Click Start Batch Processing.")
+tab1, tab2, tab3 = st.tabs(["Upload", "Extract", "Export"])
 
-with colB:
-    st.subheader("Output")
-    st.write("Results will appear as a table, and you can download CSV/JSON.")
+# =========================
+# Tab 1: Upload
+# =========================
+with tab1:
+    st.header("Upload Images")
+    st.write("Upload business card images via file selection or camera.")
+    
+    # File Uploader
+    uploaded_files = st.file_uploader(
+        "Upload Files (Batch supported)",
+        type=["png", "jpg", "jpeg", "bmp"],
+        accept_multiple_files=True,
+        key="uploader"
+    )
+    
+    # Camera Input
+    camera_image = st.camera_input("Using Camera", key="camera")
+    
+    # Combine inputs for processing logic
+    current_files = []
+    if uploaded_files:
+        current_files.extend(uploaded_files)
+    if camera_image:
+        current_files.append(camera_image)
+        
+    if current_files:
+        st.success(f"Ready to process {len(current_files)} image(s). Please go to the 'Extract' tab.")
+        with st.expander("Preview Selected Images", expanded=False):
+            cols = st.columns(3)
+            for i, f in enumerate(current_files):
+                img = Image.open(io.BytesIO(f.getvalue()))
+                cols[i % 3].image(img, caption=f.name, width=200)
+    else:
+        st.info("Waiting for image upload...")
 
+# =========================
+# Tab 2: Extract
+# =========================
+with tab2:
+    st.header("Extract Information")
+    
+    # Re-gather files from Tab 1 widgets
+    files_to_process = []
+    if uploaded_files: files_to_process.extend(uploaded_files)
+    if camera_image: files_to_process.append(camera_image)
+    
+    can_run = bool(api_key and project_id and url and files_to_process)
+    
+    if not files_to_process:
+        st.warning("No images found. Please upload or take a photo in the 'Upload' tab.")
+    elif not (api_key and project_id and url):
+        st.warning("Please configure Watsonx settings in the sidebar.")
+    
+    if st.button("Start Extraction", type="primary", disabled=not can_run):
+        results = []
+        progress_bar = st.progress(0.0)
+        status_text = st.empty()
+        
+        for idx, f in enumerate(files_to_process, start=1):
+            status_text.write(f"Processing: {f.name} ({idx}/{len(files_to_process)})")
+            try:
+                b64 = file_to_base64(f)
+                mime = detect_mime(f.name)
+                data = extract_namecard_json(b64, mime)
+                
+                # Normalize keys
+                row = {
+                    "File Name": f.name,
+                    "Company Name": data.get("Company Name") or data.get("Company"),
+                    "Name": data.get("Name"),
+                    "Title": data.get("Title"),
+                    "Phone Number": data.get("Phone Number") or data.get("Phone"),
+                    "Email Address": data.get("Email Address") or data.get("Email"),
+                    "Company Address": data.get("Company Address") or data.get("Address"),
+                    "Company Website": data.get("Company Website") or data.get("Website"),
+                    "Error": None
+                }
+            except Exception as e:
+                row = {
+                    "File Name": f.name,
+                    "Company Name": None, "Name": None, "Title": None,
+                    "Phone Number": None, "Email Address": None,
+                    "Company Address": None, "Company Website": None,
+                    "Error": str(e)
+                }
+            results.append(row)
+            progress_bar.progress(idx / len(files_to_process))
+            
+        progress_bar.empty()
+        status_text.success("Extraction Complete!")
+        
+        # Save to session state
+        st.session_state['extraction_results'] = pd.DataFrame(results)
 
-can_run = bool(api_key and project_id and url and uploaded_files)
+    # Show results if they exist in session state
+    if st.session_state['extraction_results'] is not None:
+        st.subheader("Extraction Results")
+        st.dataframe(st.session_state['extraction_results'], use_container_width=True)
+        st.info("If an image result is not clear or incorrect, please go back to the 'Upload' tab to re-upload or retake the image, then click 'Start Extraction' again.")
 
-start = st.button("Start Batch Processing", type="primary", disabled=not can_run)
-
-if uploaded_files and not (api_key and project_id and url):
-    st.warning("Please enter API Key, Project ID, and Service URL in the sidebar before processing.")
-
-if start:
-    results = []
-    progress = st.progress(0.0)
-    status = st.empty()
-
-    for idx, f in enumerate(uploaded_files, start=1):
-        status.write(f"Processing: {f.name} ({idx}/{len(uploaded_files)})")
-
+# =========================
+# Tab 3: Export
+# =========================
+with tab3:
+    st.header("Export Data")
+    
+    if st.session_state['extraction_results'] is not None:
+        df = st.session_state['extraction_results']
+        
+        st.write("Preview of data to be exported:")
+        st.dataframe(df.head(), use_container_width=True)
+        
+        # Prepare file downloads
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+        json_str = df.to_json(orient="records", indent=2)
+        
+        # Excel logic
         try:
-            b64 = file_to_base64(f)
-            mime = detect_mime(f.name)
-            data = extract_namecard_json(b64, mime)
+            excel_bytes = to_excel(df)
+            has_excel = True
+        except ImportError:
+            st.error("The 'openpyxl' library is missing. Please install it to enable Excel export.")
+            has_excel = False
+            excel_bytes = b""
 
-            row = {"File Name": f.name, **data, "Error": None}
-        except Exception as e:
-            row = {"File Name": f.name, "Name": None, "Title": None, "Company": None,
-                   "Phone": None, "Email": None, "Website": None, "Address": None,
-                   "Error": str(e)}
-
-        results.append(row)
-        progress.progress(idx / len(uploaded_files))
-
-    progress.empty()
-    status.success("Done.")
-
-    df = pd.DataFrame(results)
-
-    st.subheader("Extracted Data")
-    st.dataframe(df, use_container_width=True)
-
-    csv_bytes = df.to_csv(index=False).encode("utf-8")
-    json_str = df.to_json(orient="records", indent=2)
-
-    d1, d2 = st.columns(2)
-    with d1:
-        st.download_button("Download CSV", data=csv_bytes, file_name="namecards.csv", mime="text/csv")
-    with d2:
-        st.download_button("Download JSON", data=json_str, file_name="namecards.json", mime="application/json")
-
-    with st.expander("Preview uploaded images"):
-        cols = st.columns(3)
-        for i, f in enumerate(uploaded_files):
-            img = Image.open(io.BytesIO(f.getvalue()))
-            cols[i % 3].image(img, caption=f.name, width=280)
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if has_excel:
+                st.download_button(
+                    label="Download Excel",
+                    data=excel_bytes,
+                    file_name="namecards_extracted.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+        with col2:
+            st.download_button(
+                label="Download CSV",
+                data=csv_bytes,
+                file_name="namecards_extracted.csv",
+                mime="text/csv"
+            )
+        with col3:
+            st.download_button(
+                label="Download JSON",
+                data=json_str,
+                file_name="namecards_extracted.json",
+                mime="application/json"
+            )
+            
+    else:
+        st.info("No data available. Please extract data in the 'Extract' tab first.")
