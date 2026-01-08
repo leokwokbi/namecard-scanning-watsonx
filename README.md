@@ -137,11 +137,3 @@ git pull
 tail -f ~/namecard-scanning-watsonx/streamlit.log
 ```
 
-
-```
-<span style="display:none">[^1]</span>
-
-<div align="center">⁂</div>
-
-[^1]: https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/149253418/2e23b7a3-73ad-41d4-9140-96410ee531ac/Qwen_python_20260105_ziohd7q68.py```
-
