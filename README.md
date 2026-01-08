@@ -97,9 +97,7 @@ ngrok config add-authtoken <YOUR_AUTH_TOKEN>
 Start a screen session to keep ngrok running:
 
 ```bash
-sudo apt install screen -y
-screen -S ngrok_session
-ngrok http 8501
+nohup ngrok http 8501 > ngrok.log 2>&1 &
 ```
 
 * Copy the **Forwarding URL** (e.g., `https://a1b2-c3d4.ngrok-free.app`).
@@ -122,6 +120,7 @@ ngrok http 8501
 
 ```bash
 pkill -f streamlit
+pkill -f ngrok
 ```
 
 * **Update the App (Pull latest changes)**:
