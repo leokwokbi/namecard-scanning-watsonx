@@ -1,5 +1,4 @@
 <img src="https://r2cdn.perplexity.ai/pplx-full-logo-primary-dark%402x.png" style="height:64px;margin-right:32px"/>
-```markdown
 # 📇 Watsonx.ai Batch Namecard Scanner (Ubuntu Deployment)
 
 A professional Streamlit web application that uses **IBM watsonx.ai** generative AI (Vision Models) to extract structured contact information from business card images.
