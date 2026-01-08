@@ -8,12 +8,20 @@ from PIL import Image
 from ibm_watsonx_ai.foundation_models import ModelInference
 from ibm_watsonx_ai.metanames import GenTextParamsMetaNames as GenParams
 
-# Page Configuration
+# -------------------------
+# Page Config
+# -------------------------
 st.set_page_config(page_title="Watsonx Namecard Scanner", page_icon="📇", layout="wide")
 st.title("Watsonx.ai Batch Namecard Scanner")
 
+# Initialize Session State
+if 'image_queue' not in st.session_state:
+    st.session_state['image_queue'] = []  # List of dicts: {'name': str, 'bytes': bytes, 'type': str}
+if 'extraction_results' not in st.session_state:
+    st.session_state['extraction_results'] = [] # List of dicts with extraction data
+
 # -------------------------
-# Sidebar: watsonx settings
+# Sidebar: Settings
 # -------------------------
 st.sidebar.header("Watsonx.ai Settings")
 default_api_key = os.getenv("WATSONX_APIKEY", "")
@@ -32,28 +40,22 @@ model_id = st.sidebar.selectbox(
     ],
     index=0,
 )
-st.sidebar.caption("Tip: Keep the API Key secret.")
 
 # -------------------------
 # Helpers
 # -------------------------
-def file_to_base64(uploaded_file) -> str:
-    """Convert uploaded file to base64 string."""
-    return base64.b64encode(uploaded_file.getvalue()).decode("utf-8")
-
 def detect_mime(filename: str) -> str:
-    """Detect mime type based on extension."""
     ext = (filename.split(".")[-1] or "").lower()
     if ext in ("jpg", "jpeg"): return "image/jpeg"
     if ext == "png": return "image/png"
     if ext == "bmp": return "image/bmp"
     return "image/jpeg"
 
-def extract_namecard_json(image_b64: str, mime_type: str) -> dict:
+def extract_namecard_json(image_bytes: bytes, mime_type: str) -> dict:
     """Sends image to watsonx.ai and returns parsed JSON."""
     credentials = {"url": url, "apikey": api_key}
+    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
     
-    # Updated prompt to match specific requested fields
     prompt_text = (
         "You are given a business card image.\n"
         "Extract information and return STRICT JSON ONLY, with exactly these keys:\n"
@@ -104,21 +106,18 @@ def extract_namecard_json(image_b64: str, mime_type: str) -> dict:
     return json.loads(cleaned)
 
 def to_excel(df):
-    """Convert dataframe to excel bytes."""
     output = io.BytesIO()
-    # Requires openpyxl installed
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Sheet1')
     return output.getvalue()
 
-# -------------------------
-# UI: Tabs Structure
-# -------------------------
+def update_result(index, key):
+    """Callback to update session state when user edits a field"""
+    st.session_state['extraction_results'][index][key] = st.session_state[f"{key}_{index}"]
 
-# Initialize session state for results
-if 'extraction_results' not in st.session_state:
-    st.session_state['extraction_results'] = None
-
+# -------------------------
+# UI: Tabs
+# -------------------------
 tab1, tab2, tab3 = st.tabs(["Upload", "Extract", "Export"])
 
 # =========================
@@ -126,100 +125,140 @@ tab1, tab2, tab3 = st.tabs(["Upload", "Extract", "Export"])
 # =========================
 with tab1:
     st.header("Upload Images")
-    st.write("Upload business card images via file selection or camera.")
     
-    # File Uploader
-    uploaded_files = st.file_uploader(
-        "Upload Files (Batch supported)",
-        type=["png", "jpg", "jpeg", "bmp"],
-        accept_multiple_files=True,
-        key="uploader"
-    )
+    # Toggle for input method
+    input_method = st.radio("Choose Input Method:", ["Upload Files", "Use Camera"], horizontal=True)
     
-    # Camera Input
-    camera_image = st.camera_input("Using Camera", key="camera")
+    if input_method == "Upload Files":
+        uploaded_files = st.file_uploader(
+            "Select images (Batch supported)",
+            type=["png", "jpg", "jpeg", "bmp"],
+            accept_multiple_files=True
+        )
+        if uploaded_files:
+            # Add unique files to queue
+            current_names = {img['name'] for img in st.session_state['image_queue']}
+            for f in uploaded_files:
+                if f.name not in current_names:
+                    st.session_state['image_queue'].append({
+                        'name': f.name,
+                        'bytes': f.getvalue(),
+                        'type': detect_mime(f.name)
+                    })
     
-    # Combine inputs for processing logic
-    current_files = []
-    if uploaded_files:
-        current_files.extend(uploaded_files)
-    if camera_image:
-        current_files.append(camera_image)
+    elif input_method == "Use Camera":
+        camera_file = st.camera_input("Take a picture")
+        if camera_file:
+            # Generate a unique name for camera captures
+            import time
+            cam_name = f"camera_{int(time.time())}.jpg"
+            # Avoid duplicate adds if the user hasn't retaken the photo
+            current_names = {img['name'] for img in st.session_state['image_queue']}
+            if cam_name not in current_names:
+                st.session_state['image_queue'].append({
+                    'name': cam_name,
+                    'bytes': camera_file.getvalue(),
+                    'type': "image/jpeg"
+                })
+                st.success("Photo added to queue!")
+
+    # Display Queue
+    if st.session_state['image_queue']:
+        st.divider()
+        st.subheader(f"Images in Queue ({len(st.session_state['image_queue'])})")
         
-    if current_files:
-        st.success(f"Ready to process {len(current_files)} image(s). Please go to the 'Extract' tab.")
-        with st.expander("Preview Selected Images", expanded=False):
-            cols = st.columns(3)
-            for i, f in enumerate(current_files):
-                img = Image.open(io.BytesIO(f.getvalue()))
-                cols[i % 3].image(img, caption=f.name, width=200)
+        # Grid view of uploaded images
+        cols = st.columns(4)
+        for i, img_data in enumerate(st.session_state['image_queue']):
+            with cols[i % 4]:
+                st.image(img_data['bytes'], caption=img_data['name'], use_column_width=True)
+        
+        if st.button("Clear Queue", type="secondary"):
+            st.session_state['image_queue'] = []
+            st.rerun()
     else:
-        st.info("Waiting for image upload...")
+        st.info("No images in queue. Please upload files or use the camera.")
 
 # =========================
 # Tab 2: Extract
 # =========================
 with tab2:
-    st.header("Extract Information")
+    st.header("Extract & Edit Information")
     
-    # Re-gather files from Tab 1 widgets
-    files_to_process = []
-    if uploaded_files: files_to_process.extend(uploaded_files)
-    if camera_image: files_to_process.append(camera_image)
+    queue = st.session_state['image_queue']
+    can_run = bool(api_key and project_id and url and queue)
     
-    can_run = bool(api_key and project_id and url and files_to_process)
+    if not queue:
+        st.warning("Please add images in the 'Upload' tab first.")
     
-    if not files_to_process:
-        st.warning("No images found. Please upload or take a photo in the 'Upload' tab.")
-    elif not (api_key and project_id and url):
-        st.warning("Please configure Watsonx settings in the sidebar.")
-    
+    # Process Button
     if st.button("Start Extraction", type="primary", disabled=not can_run):
         results = []
         progress_bar = st.progress(0.0)
-        status_text = st.empty()
+        status = st.empty()
         
-        for idx, f in enumerate(files_to_process, start=1):
-            status_text.write(f"Processing: {f.name} ({idx}/{len(files_to_process)})")
+        for idx, img_data in enumerate(queue, start=1):
+            status.write(f"Processing: {img_data['name']}...")
             try:
-                b64 = file_to_base64(f)
-                mime = detect_mime(f.name)
-                data = extract_namecard_json(b64, mime)
-                
-                # Normalize keys
+                data = extract_namecard_json(img_data['bytes'], img_data['type'])
                 row = {
-                    "File Name": f.name,
-                    "Company Name": data.get("Company Name") or data.get("Company"),
+                    "File Name": img_data['name'],
+                    "Company Name": data.get("Company Name"),
                     "Name": data.get("Name"),
                     "Title": data.get("Title"),
-                    "Phone Number": data.get("Phone Number") or data.get("Phone"),
-                    "Email Address": data.get("Email Address") or data.get("Email"),
-                    "Company Address": data.get("Company Address") or data.get("Address"),
-                    "Company Website": data.get("Company Website") or data.get("Website"),
-                    "Error": None
+                    "Phone Number": data.get("Phone Number"),
+                    "Email Address": data.get("Email Address"),
+                    "Company Address": data.get("Company Address"),
+                    "Company Website": data.get("Company Website"),
+                    "image_bytes": img_data['bytes'] # Store for display
                 }
             except Exception as e:
                 row = {
-                    "File Name": f.name,
-                    "Company Name": None, "Name": None, "Title": None,
-                    "Phone Number": None, "Email Address": None,
-                    "Company Address": None, "Company Website": None,
+                    "File Name": img_data['name'],
+                    "Company Name": "", "Name": "", "Title": "",
+                    "Phone Number": "", "Email Address": "",
+                    "Company Address": "", "Company Website": "",
+                    "image_bytes": img_data['bytes'],
                     "Error": str(e)
                 }
             results.append(row)
-            progress_bar.progress(idx / len(files_to_process))
+            progress_bar.progress(idx / len(queue))
             
+        st.session_state['extraction_results'] = results
         progress_bar.empty()
-        status_text.success("Extraction Complete!")
-        
-        # Save to session state
-        st.session_state['extraction_results'] = pd.DataFrame(results)
+        status.success("Extraction Complete! You can edit the results below.")
 
-    # Show results if they exist in session state
-    if st.session_state['extraction_results'] is not None:
-        st.subheader("Extraction Results")
-        st.dataframe(st.session_state['extraction_results'], use_container_width=True)
-        st.info("If an image result is not clear or incorrect, please go back to the 'Upload' tab to re-upload or retake the image, then click 'Start Extraction' again.")
+    # Editable Interface
+    if st.session_state['extraction_results']:
+        st.divider()
+        st.write("Review and edit the extracted information below. Changes are saved automatically.")
+        
+        for i, row in enumerate(st.session_state['extraction_results']):
+            with st.container():
+                c1, c2 = st.columns([1, 2])
+                
+                # Column 1: Image
+                with c1:
+                    st.image(row['image_bytes'], caption=row['File Name'], use_column_width=True)
+                
+                # Column 2: Editable Fields
+                with c2:
+                    st.subheader(f"Card {i+1}")
+                    
+                    # Layout fields in a grid for compactness
+                    f1, f2 = st.columns(2)
+                    with f1:
+                        st.text_input("Name", value=row['Name'], key=f"Name_{i}", on_change=update_result, args=(i, 'Name'))
+                        st.text_input("Title", value=row['Title'], key=f"Title_{i}", on_change=update_result, args=(i, 'Title'))
+                        st.text_input("Phone", value=row['Phone Number'], key=f"Phone Number_{i}", on_change=update_result, args=(i, 'Phone Number'))
+                        st.text_input("Email", value=row['Email Address'], key=f"Email Address_{i}", on_change=update_result, args=(i, 'Email Address'))
+                    
+                    with f2:
+                        st.text_input("Company", value=row['Company Name'], key=f"Company Name_{i}", on_change=update_result, args=(i, 'Company Name'))
+                        st.text_input("Website", value=row['Company Website'], key=f"Company Website_{i}", on_change=update_result, args=(i, 'Company Website'))
+                        st.text_area("Address", value=row['Company Address'], key=f"Company Address_{i}", on_change=update_result, args=(i, 'Company Address'), height=100)
+                
+                st.divider()
 
 # =========================
 # Tab 3: Export
@@ -227,48 +266,36 @@ with tab2:
 with tab3:
     st.header("Export Data")
     
-    if st.session_state['extraction_results'] is not None:
-        df = st.session_state['extraction_results']
-        
-        st.write("Preview of data to be exported:")
-        st.dataframe(df.head(), use_container_width=True)
-        
-        # Prepare file downloads
-        csv_bytes = df.to_csv(index=False).encode("utf-8")
-        json_str = df.to_json(orient="records", indent=2)
-        
-        # Excel logic
-        try:
-            excel_bytes = to_excel(df)
-            has_excel = True
-        except ImportError:
-            st.error("The 'openpyxl' library is missing. Please install it to enable Excel export.")
-            has_excel = False
-            excel_bytes = b""
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if has_excel:
-                st.download_button(
-                    label="Download Excel",
-                    data=excel_bytes,
-                    file_name="namecards_extracted.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-        with col2:
-            st.download_button(
-                label="Download CSV",
-                data=csv_bytes,
-                file_name="namecards_extracted.csv",
-                mime="text/csv"
-            )
-        with col3:
-            st.download_button(
-                label="Download JSON",
-                data=json_str,
-                file_name="namecards_extracted.json",
-                mime="application/json"
-            )
+    if st.session_state['extraction_results']:
+        # Convert list of dicts to DataFrame, excluding internal 'image_bytes' column
+        export_data = []
+        for row in st.session_state['extraction_results']:
+            # Create a clean copy without the image bytes for CSV/Excel
+            clean_row = {k: v for k, v in row.items() if k != 'image_bytes'}
+            export_data.append(clean_row)
             
+        df = pd.DataFrame(export_data)
+        
+        st.subheader("Final Dataset")
+        st.dataframe(df, use_container_width=True) # Shows ALL rows
+        
+        # Download Buttons
+        col1, col2, col3 = st.columns(3)
+        
+        csv = df.to_csv(index=False).encode('utf-8')
+        json_str = df.to_json(orient='records', indent=2)
+        
+        with col1:
+            try:
+                excel_data = to_excel(df)
+                st.download_button("Download Excel", data=excel_data, file_name="cards.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            except Exception as e:
+                st.error(f"Excel export failed (missing openpyxl?): {e}")
+        
+        with col2:
+            st.download_button("Download CSV", data=csv, file_name="cards.csv", mime="text/csv")
+            
+        with col3:
+            st.download_button("Download JSON", data=json_str, file_name="cards.json", mime="application/json")
     else:
-        st.info("No data available. Please extract data in the 'Extract' tab first.")
+        st.info("No data to export.")
