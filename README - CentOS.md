@@ -29,8 +29,8 @@ Before you begin, ensure you have:
 Open your terminal and run the following commands to update package lists and install necessary tools.
 
 ```bash
-sudo dnf update -y
-sudo dnf install -y python3 python3-pip git
+sudo yum update -y
+sudo yum install -y python3 python3-pip git
 ```
 
 
@@ -140,8 +140,3 @@ git pull
 ```bash
 tail -f ~/namecard-scanning-watsonx/streamlit.log
 ```
-
-[^15]: https://linuxhint.com/set-up-use-ngrok/
-
-[^16]: https://blog.csdn.net/sumengnan/article/details/125016761
-
