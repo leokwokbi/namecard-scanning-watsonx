@@ -1,7 +1,3 @@
-<img src="https://r2cdn.perplexity.ai/pplx-full-logo-primary-dark%402x.png" style="height:64px;margin-right:32px"/>
-
-# Convert the readme file from using ubuntu os to centos
-
 Here is the converted **README.md** file tailored for a **CentOS** (or RHEL-based) environment.
 
 The key changes include:
@@ -154,38 +150,6 @@ git pull
 ```bash
 tail -f ~/namecard-scanning-watsonx/streamlit.log
 ```
-
-<span style="display:none">[^10][^11][^12][^13][^14][^15][^16][^3][^4][^5][^6][^7][^8][^9]</span>
-
-<div align="center">⁂</div>
-
-[^1]: https://ngrok.com/docs/guides/device-gateway/linux
-
-[^2]: https://ngrok.mintlify.dev/docs/guides/device-gateway/linux
-
-[^3]: README.md
-
-[^4]: https://ngrok.com/download
-
-[^5]: https://snapcraft.io/install/ngrok/centos
-
-[^6]: https://snapcraft.io/install/ngrok/rhel
-
-[^7]: https://gist.github.com/41a662dbaa24f98a43becf489143b86f
-
-[^8]: https://gist.github.com/SalahHamza/799cac56b8c2cd20e6bfeb8886f18455
-
-[^9]: https://www.geeksforgeeks.org/installation-guide/how-to-install-ngrok-on-linux/
-
-[^10]: https://www.youtube.com/watch?v=MA7cxy41N8Y
-
-[^11]: https://learn.arm.com/learning-paths/servers-and-cloud-computing/gh-copilot-simple/run-ngrok/
-
-[^12]: https://github.com/CPScript/Ngrok
-
-[^13]: https://serverspace.io/support/help/ngrok-installation-and-traffic-policies/
-
-[^14]: https://ngrok.com/docs/getting-started
 
 [^15]: https://linuxhint.com/set-up-use-ngrok/
 
