@@ -1,13 +1,3 @@
-Here is the converted **README.md** file tailored for a **CentOS** (or RHEL-based) environment.
-
-The key changes include:
-
-1. **Package Management**: Replaced `apt` commands with `dnf` (the standard for CentOS 8/Stream 9).
-2. **Prerequisites**: Updated OS recommendations to CentOS Stream/RHEL.
-3. **ngrok Installation**: Switched from `apt` (which isn't native to CentOS) to the universal **binary installation** method, which is cleaner than setting up Snap/EPEL repositories on CentOS just for one tool.
-
-***
-
 # 📇 Watsonx.ai Batch Namecard Scanner (CentOS Deployment)
 
 A professional Streamlit web application that uses **IBM watsonx.ai** generative AI (Vision Models) to extract structured contact information from business card images.
